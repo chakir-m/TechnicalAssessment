@@ -107,7 +107,15 @@
       btn.disabled = true;
       const { error } = await sb.auth.signInWithPassword({ email: email.value.trim(), password: pass.value });
       btn.disabled = false;
-      if (error) { err.textContent = "Email or password is incorrect."; return; }
+      if (error) {
+        const m = (error.message || "").toLowerCase();
+        if (m.includes("invalid login credentials")) err.textContent = "Email or password is incorrect.";
+        else if (m.includes("email not confirmed")) err.textContent = "This account is not confirmed. In Supabase > Authentication > Users, confirm the user or recreate it with Auto Confirm User ticked.";
+        else if (m.includes("logins are disabled") || m.includes("provider is not enabled") || m.includes("signups not allowed")) err.textContent = "Email sign-in is turned off. In Supabase > Authentication > Sign In / Providers, enable the Email provider (keep only new sign-ups turned off).";
+        else if (m.includes("api key") || m.includes("fetch") || m.includes("network")) err.textContent = "Cannot reach Supabase. Check SUPABASE_URL and the publishable key in config.js. (" + error.message + ")";
+        else err.textContent = "Sign-in failed: " + error.message;
+        return;
+      }
       checkAdmin();
     });
     app.replaceChildren(el("main", { class: "login panel" },
