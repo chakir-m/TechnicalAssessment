@@ -113,7 +113,8 @@
     if (!window.supabase || !cfg.SUPABASE_URL || cfg.SUPABASE_URL.includes("YOUR-PROJECT")) {
       return showMessage("The assessment is not configured yet", "Contact the recruiter who sent you this link.");
     }
-    sb = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY, {
+    const baseUrl = (function (u) { try { return new URL(String(u).trim()).origin; } catch (_) { return String(u).trim(); } })(cfg.SUPABASE_URL);
+    sb = window.supabase.createClient(baseUrl, String(cfg.SUPABASE_ANON_KEY).trim(), {
       auth: { persistSession: false, autoRefreshToken: false }
     });
     try {

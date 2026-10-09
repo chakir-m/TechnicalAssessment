@@ -88,7 +88,8 @@
         el("p", { text: "Open config.js and fill in SUPABASE_URL and SUPABASE_ANON_KEY from your Supabase project settings." })));
       return;
     }
-    sb = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
+    const baseUrl = (function (u) { try { return new URL(String(u).trim()).origin; } catch (_) { return String(u).trim(); } })(cfg.SUPABASE_URL);
+    sb = window.supabase.createClient(baseUrl, String(cfg.SUPABASE_ANON_KEY).trim());
     const { data } = await sb.auth.getSession();
     if (data.session) checkAdmin(); else showLogin();
   }
