@@ -340,6 +340,11 @@ details.rubric pre.answer { margin: .4rem 0 0; }
 .settings-foot { display: flex; align-items: center; gap: 1rem; margin-top: 1rem; flex-wrap: wrap; }
 .settings-foot .spacer { flex: 1; }
 
+.danger-zone { border-color: #e5b5af; }
+.danger-row { display: flex; align-items: center; gap: 1rem; justify-content: space-between; flex-wrap: wrap; padding: 1rem; border: 1px solid #f0d2ce; border-radius: var(--radius-sm); background: #fffafa; }
+button.danger-fill { background: var(--danger); border-color: var(--danger); }
+button.danger-fill:hover:not(:disabled) { background: #8f1c13; border-color: #8f1c13; }
+.modal label { margin-top: .4rem; }
 .login { max-width: 400px; margin: 5rem auto; padding: 0 1rem; }
 .login form { display: grid; gap: 1rem; }
 .login .panel { padding: 2rem; }

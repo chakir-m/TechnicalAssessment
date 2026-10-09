@@ -608,28 +608,56 @@
     pdfBtn.addEventListener("click", () => pdfCandidate(rows.find(r => r.id === c.id) || c, ctx));
     const copyBtn = el("button", { text: "Copy test link" });
     copyBtn.addEventListener("click", () => copy(testUrl(c.token), copyBtn));
-    const resetBtn = el("button", { text: "Reset attempt" });
+    const resetBtn = el("button", { text: "Delete results", disabled: !c.started_at,
+      title: c.started_at ? null : "The candidate has not started the test" });
     resetBtn.addEventListener("click", async () => {
-      const ok = await modal("Reset this attempt?", "This deletes " + c.full_name + "'s answers and lets them start again with a fresh timer and new questions. Use it only after a technical problem.", "Reset attempt", "Cancel");
+      const ok = await modal("Delete " + c.full_name + "'s results?",
+        "This deletes their answers, scores, questions drawn and integrity signals.\n\n" +
+        "The candidate stays in the list with the same test link, which works again: they can retake the test with a fresh timer and new questions. Your decision and notes are kept.\n\nThis cannot be undone.",
+        "Delete results", "Cancel");
       if (!ok) return;
-      await sb.from("answers").delete().eq("candidate_id", c.id);
-      await sb.from("events").delete().eq("candidate_id", c.id);
-      await sb.from("assignments").delete().eq("candidate_id", c.id);
-      const { error } = await sb.from("candidates").update({
-        started_at: null, deadline: null, submitted_at: null, current_step: null, step_times: {}
-      }).eq("id", c.id);
-      if (error) { toast("Reset failed: " + error.message); return; }
+      const { error } = await sb.rpc("admin_delete_results", { p_id: c.id });
+      if (error) { toast(toolError(error, "Delete failed")); return; }
+      toast("Results deleted");
       close();
     });
     const delBtn = el("button", { class: "danger", text: "Delete candidate" });
     delBtn.addEventListener("click", async () => {
-      const ok = await modal("Delete this candidate?", "This deletes " + c.full_name + " and all their answers. It cannot be undone.", "Delete", "Cancel");
+      const ok = await modal("Delete " + c.full_name + "?",
+        "This deletes the candidate and everything linked to them: answers, scores, decision, notes and signals. Their test link stops working.\n\nThis cannot be undone.",
+        "Delete candidate", "Cancel");
       if (!ok) return;
       const { error } = await sb.from("candidates").delete().eq("id", c.id);
       if (error) { toast("Delete failed: " + error.message); return; }
+      toast("Candidate deleted");
       close();
     });
-    return el("div", { class: "drawer-actions" }, pdfBtn, copyBtn, resetBtn, delBtn);
+    return el("div", { class: "drawer-actions" }, pdfBtn, copyBtn, el("span", { style: "flex:1" }), resetBtn, delBtn);
+  }
+
+  function toolError(error, prefix) {
+    const m = (error && error.message) || "";
+    if (/function|schema cache|not find/i.test(m)) return prefix + ": run supabase/03_admin_tools.sql in the Supabase SQL Editor first.";
+    return prefix + ": " + m;
+  }
+
+  // Confirmation that requires typing a word, for irreversible bulk actions.
+  function confirmTyped(title, text, word, okLabel) {
+    return new Promise(resolve => {
+      const input = el("input", { type: "text", autocomplete: "off", "aria-label": "Type " + word + " to confirm" });
+      const ok = el("button", { class: "primary danger-fill", text: okLabel, disabled: true });
+      const cancel = el("button", { text: "Cancel" });
+      const bg = el("div", { class: "modal-bg" }, el("div", { class: "modal", role: "dialog", "aria-modal": "true" },
+        el("h2", { text: title }), el("p", { text }),
+        el("label", { text: "Type " + word + " to confirm" }), input,
+        el("div", { class: "modal-actions" }, cancel, ok)));
+      const close = v => { bg.remove(); resolve(v); };
+      input.addEventListener("input", () => { ok.disabled = input.value.trim() !== word; });
+      ok.addEventListener("click", () => close(true));
+      cancel.addEventListener("click", () => close(false));
+      document.body.append(bg);
+      input.focus();
+    });
   }
 
   // ================================================================ settings view
@@ -715,7 +743,35 @@
       el("section", { class: "panel" },
         el("h2", { text: "Question bank by technology" }),
         el("p", { class: "muted", text: "Active questions available per stage. Add or edit questions in Supabase > Table Editor > questions, or in 02_questions.sql." }),
-        el("div", { class: "table-wrap" }, matrix)));
+        el("div", { class: "table-wrap" }, matrix)),
+      dangerZone());
+  }
+
+  function dangerZone() {
+    const wipe = el("button", { class: "danger", text: "Delete all candidates and results" });
+    wipe.addEventListener("click", async () => {
+      const n = rows.length;
+      const ok = await confirmTyped("Start from scratch?",
+        "This permanently deletes all " + n + (n === 1 ? " candidate" : " candidates") + " with their answers, scores, decisions, notes and signals. All test links stop working.\n\n" +
+        "Questions, test settings and admin accounts are kept. Export a PDF or CSV first if you need a record.",
+        "DELETE", "Delete everything");
+      if (!ok) return;
+      wipe.disabled = true;
+      const { data, error } = await sb.rpc("admin_delete_all_candidates", { p_confirm: "DELETE" });
+      wipe.disabled = false;
+      if (error) { toast(toolError(error, "Delete failed")); return; }
+      lastCreated = null;
+      toast((data || 0) + " candidate(s) deleted. You can start from scratch.");
+      await refresh();
+    });
+    return el("section", { class: "panel danger-zone" },
+      el("h2", { text: "Delete data" }),
+      el("p", { class: "muted", text: "To remove one candidate or only their results, open the candidate from the Candidates tab and use Delete results or Delete candidate at the bottom." }),
+      el("div", { class: "danger-row" },
+        el("div", {},
+          el("strong", { text: "Start from scratch" }),
+          el("div", { class: "muted small", text: "Deletes every candidate and all results. Questions, settings and admin accounts are kept." })),
+        wipe));
   }
 
   // ================================================================ PDF reports
