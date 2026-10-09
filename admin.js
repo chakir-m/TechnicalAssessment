@@ -46,8 +46,11 @@
   const num = v => Number(v || 0);
 
   function testUrl(token) {
-    const base = location.href.split("?")[0].split("#")[0].replace(/admin\.html$/, "");
-    return (base.endsWith("/") ? base : base + "/") + "index.html?t=" + token;
+    // Resolve next to the back-office page, whether it was opened as
+    // .../admin.html or .../admin (GitHub Pages serves both).
+    const url = new URL("index.html", location.origin + location.pathname);
+    url.searchParams.set("t", token);
+    return url.href;
   }
 
   function status(c) {
