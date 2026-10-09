@@ -1,77 +1,69 @@
-# Junior full-stack technical test
+# Full-stack technical assessment (version 2)
 
-A 30-minute online assessment with a server-side timer, a progressive problem and a private back office. It runs for free on GitHub Pages (website) and Supabase (database and login). No domain name or hosting space is needed.
+An online assessment with a server-side timer, 7 progressive stages and a private back office. Each candidate gets their own random mix of questions across JavaScript/TypeScript, Java, C#, PHP and Python, and the back office shows which language each candidate is strongest in.
+
+It runs for free on GitHub Pages (website) and Supabase (database and login).
 
 | File | Purpose |
 |---|---|
-| `index.html`, `candidate.js` | The page candidates open from their invitation link |
-| `admin.html`, `admin.js` | Your back office: invite candidates, see and score results |
+| `index.html`, `candidate.js` | The page candidates open from their test link |
+| `admin.html`, `admin.js` | Back office: invite, follow, score, decide, settings |
 | `style.css` | Shared design |
-| `config.js` | Your Supabase address and public key (the only file you edit) |
-| `supabase/01_schema.sql` | Database tables, security rules, timer and grading |
-| `supabase/02_questions.sql` | The question bank |
+| `config.js` | Your Supabase address and key (keep your existing one) |
+| `supabase/01_schema.sql` | Tables, security rules, random draw, timer, grading, statistics |
+| `supabase/02_questions.sql` | Stages and the question bank (95 questions) |
+
+## Upgrading from version 1
+
+1. In Supabase > **SQL Editor**, run `supabase/01_schema.sql`, then `supabase/02_questions.sql`.
+   This rebuilds the tables, so **existing candidates and answers are deleted**. Your admin account is kept.
+2. On GitHub, replace `index.html`, `admin.html`, `candidate.js`, `admin.js` and `style.css`.
+   **Do not replace `config.js`**: yours already contains your Supabase URL and key.
+3. Wait a minute, open the back office with Ctrl + F5, create a link for yourself and take the test once.
 
 ## What candidates take
 
-One link per candidate. They pick their language (or you assign it): JavaScript/Node, Java/Spring, C#/.NET, PHP/Laravel or Python/Django.
+No language to choose. Questions are drawn at random when the candidate presses Start, from the technologies you tick at invitation (all five by default), and balanced so each language appears.
 
-| Part | Content | Points |
+| Stage | Content | Default draw |
 |---|---|---|
-| Quiz | 8 fundamentals questions (HTTP, REST, SQL, Git, security) and 2 on their language | 10, auto-graded |
-| Stage 1: Data | MiniEvent booking platform: pick the right counting query, then write a query for full events | 5 |
-| Stage 2: Business rules | Choose the right HTTP status, then write `canBook()` in their language | 6 |
-| Stage 3: Concurrency bug | Read the booking endpoint in their language, spot the overbooking, propose a fix | 7 |
-| Stage 4: Security | Spot SQL injection and IDOR in their language, then rewrite the endpoint securely | 7 |
+| 1. Web and tools | HTTP, REST, cookies, CORS, Git | 4 multiple-choice, 1 pt each |
+| 2. Databases and SQL | Joins, grouping, indexes, NULL, transactions | 4 multiple-choice, 1 pt |
+| 3. Code reading | Predict the output; one snippet per language | 5 multiple-choice, 1 pt |
+| 4. Frameworks | React, Angular, Vue, Express, Spring, ASP.NET Core, EF Core, Laravel, Django | 5 multiple-choice, 1 pt |
+| 5. Debugging | Real bugs in different languages, then fix an overbooking race condition | 4 multiple-choice (2 pts) + 1 written (5 pts) |
+| 6. Security | XSS, IDOR, JWT, uploads, CSRF..., then secure an endpoint | 4 multiple-choice (2 pts) + 1 written (5 pts) |
+| 7. Problem solving | One function to write, in the language of their choice | 1 written (6 pts) |
 
-Each stage unlocks only after the previous one is submitted, and candidates cannot go back. 18 points are graded automatically; you score the 4 written answers (17 points) in the back office with the scoring guide shown under each answer.
+29 questions and 50 points in 30 minutes: the test is deliberately long, so how far a candidate gets is part of the result. Change the counts in **Test settings** in the back office.
 
-The test is deliberately longer than 30 minutes for a junior. How far a candidate gets, and how they get there, is part of the signal. As a starting point, which you should adjust after your first candidates: reaching Stage 3 with about 50% or more is a good junior profile; reaching Stage 4 with a sensible security fix is strong.
+Candidate interface: one question at a time, stage list and question map on the side, code editor with syntax highlighting, keyboard shortcuts (1–4 to answer, Enter for next), timer warnings at 5 and 1 minute, and an "End test" button.
 
-## Setup (about 30–45 minutes, once)
+## Results
 
-### 1. Create the database (Supabase)
-1. Create a free account at supabase.com and a **New project**. Choose a European region (Frankfurt or Paris) for lower latency from Morocco. Save the database password somewhere safe.
-2. Open **SQL Editor**, paste the whole content of `supabase/01_schema.sql`, and click **Run**.
-3. Do the same with `supabase/02_questions.sql`.
+- **Candidates list**: score, best language, furthest stage, time used, integrity signals, answers to score, your decision. Filter by status, search, export to CSV (includes a score per language).
+- **Candidate page**: score by technology (Web and tools, SQL, JavaScript/TS, Java, C#, PHP, Python), with the strongest and weakest language; score and time per stage; every answer next to the expected one; scoring guide and score box for written answers; decision (Shortlisted, Interview, On hold, Rejected, Hired) and team notes.
+- Language scores only count the stages the candidate reached. With 1 or 2 questions per language, treat them as a signal to confirm in the interview, not a verdict.
 
-### 2. Create your back-office account
-1. **Authentication > Sign In / Providers**: turn **off** "Allow new users to sign up", so nobody else can create an account.
-2. **Authentication > Users > Add user > Create new user**: enter your email and a strong password, and tick **Auto Confirm User**.
-3. In **SQL Editor**, run this with your email:
-   ```sql
-   insert into public.admins (email) values ('you@yourcompany.com');
-   ```
-   Repeat for each colleague who should see results (create their user first).
+## First-time setup (if starting from scratch)
 
-### 3. Connect the website to the database
-1. **Project Settings > API** (or **API Keys**): copy the **Project URL** and the **anon** / **publishable** key.
-2. Paste them into `config.js`, and set `COMPANY_NAME`.
-3. Never put the **service_role** / **secret** key in any file.
+1. Create a free Supabase project. In **SQL Editor**, run `01_schema.sql`, then `02_questions.sql`.
+2. **Authentication > Sign In / Providers**: keep the Email provider on, turn off "Allow new users to sign up".
+3. **Authentication > Users > Add user**: your email and password, tick Auto Confirm User. Then in SQL Editor:
+   `insert into public.admins (email) values ('you@example.com');`
+4. Put your Project URL (for example `https://abcd.supabase.co`, nothing after `.co`) and your publishable key in `config.js`.
+5. Upload the 6 website files to a public GitHub repository (not the `supabase` folder, which contains the answers). In **Settings > Pages**, deploy from branch `main`, folder `/ (root)`.
+6. Back office: `https://your-username.github.io/your-repo/admin.html`.
 
-### 4. Publish on GitHub Pages
-1. Create a free account at github.com, then **New repository**, for example `tech-test`. On the free plan it must be **Public**: that is fine, because answer keys and rubrics stay in the database and are never sent to candidates.
-2. **Add file > Upload files**: drag in `index.html`, `admin.html`, `candidate.js`, `admin.js`, `style.css` and `config.js`. You do not need to upload the `supabase` folder (keep it on your computer so the answer keys are not public).
-3. **Settings > Pages**: under "Build and deployment", choose **Deploy from a branch**, branch `main`, folder `/ (root)`, and **Save**.
-4. After a minute your site is live at `https://YOUR-USERNAME.github.io/tech-test/`.
-   - Back office: `https://YOUR-USERNAME.github.io/tech-test/admin.html`
-   - Candidates never get this address: they receive a personal link created in the back office.
+## Security and fairness
 
-### 5. Test it yourself before sending it
-Open `admin.html`, create a link for yourself, take the test in a private window, then check your results in the back office. Use **Reset attempt** to clear your test run, or **Delete candidate**.
+- The timer, stage unlocking and grading run in the database. Candidates never receive correct answers or scoring guides, and cannot reopen a submitted stage.
+- Each link works for one candidate and one attempt. Questions and answer order differ per candidate.
+- Tab switches, focus loss, copy and paste are recorded as signals, not proof.
+- Only signed-in emails listed in `admins` can read results.
+- Candidate data is stored in your Supabase project: tell candidates how it is used and how long it is kept (Moroccan law 09-08, CNDP).
 
-## Daily use
-1. In the back office, enter the candidate's name, optional email, language (or let them choose) and duration, then **Create link**.
-2. Copy the link or use **Open an email to the candidate**.
-3. Results appear live. Click a candidate to see each answer, the time spent per stage, and integrity signals, and to score the written answers.
-4. **Export CSV** gives a spreadsheet of all candidates.
+## Editing questions
 
-## How it stays fair and secure
-- The timer runs on the server. Closing the page does not pause it, and answers sent after the deadline (plus 15 seconds of grace) are refused.
-- Questions are only sent when the candidate reaches their stage, without the correct answers. Choice questions are graded in the database.
-- Each link works for one candidate and one attempt. Question and option order are shuffled per candidate.
-- Leaving the tab, losing window focus, copying and pasting are recorded. Treat them as signals to discuss in the interview, not as proof of cheating.
-- Anonymous visitors cannot read any table. Only signed-in emails listed in `admins` can see results.
-- Candidates' personal data is stored in your Supabase project. Tell candidates how it is used and how long you keep it, and check your obligations under Moroccan law 09-08 with the CNDP.
-
-## Changing the questions
-Edit `supabase/02_questions.sql` and run it again in the SQL Editor (existing candidates and answers are kept), or edit rows directly in **Table Editor > questions**. A choice question needs `options` (a JSON list of strings) and `correct` (the 0-based index of the right option). A code question needs a `rubric`. Use `track = 'core'` for everyone, or a language code for language-specific questions.
+Edit `supabase/02_questions.sql` and run it again (candidates are kept), or edit rows in **Table Editor > questions**:
+`stage` (1–7), `lang` (`general`, `sql`, `js`, `java`, `csharp`, `php`, `python`, or `any` for "candidate chooses"), `kind` (`choice` or `code`), `options` (JSON list) with `correct` (0-based index) for choice questions, `rubric` for written ones, and `active` to switch a question off.
