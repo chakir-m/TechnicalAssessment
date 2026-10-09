@@ -360,6 +360,7 @@
     });
 
     const csvBtn = el("button", { text: "Export CSV", onclick: exportCsv });
+    const pdfBtn = el("button", { text: "Export PDF", onclick: () => pdfSummary(list) });
     const table = list.length
       ? el("div", { class: "table-wrap" }, el("table", {},
           el("thead", {}, el("tr", {},
@@ -378,7 +379,7 @@
     filter.addEventListener("change", () => { statusFilter = filter.value; drawTable(host); });
 
     host.replaceChildren(el("section", { class: "panel" },
-      el("div", { class: "table-tools" }, el("h2", { text: "Candidates (" + list.length + ")" }), searchInput, filter, csvBtn),
+      el("div", { class: "table-tools" }, el("h2", { text: "Candidates (" + list.length + ")" }), searchInput, filter, pdfBtn, csvBtn),
       table));
   }
 
@@ -424,7 +425,7 @@
         decisionBlock(c),
         c.started_at ? answersBlock(c, assigned, answers, qById, renderBody) : null,
         eventsBlock(c, events),
-        actionsBlock(c, close));
+        actionsBlock(c, close, { assigned, answers, events, qById }));
       drawer.scrollTop = keep;
     };
     renderBody();
@@ -599,7 +600,9 @@
     return panel;
   }
 
-  function actionsBlock(c, close) {
+  function actionsBlock(c, close, ctx) {
+    const pdfBtn = el("button", { class: "primary", text: "Download PDF report" });
+    pdfBtn.addEventListener("click", () => pdfCandidate(rows.find(r => r.id === c.id) || c, ctx));
     const copyBtn = el("button", { text: "Copy test link" });
     copyBtn.addEventListener("click", () => copy(testUrl(c.token), copyBtn));
     const resetBtn = el("button", { text: "Reset attempt" });
@@ -623,7 +626,7 @@
       if (error) { toast("Delete failed: " + error.message); return; }
       close();
     });
-    return el("div", { class: "drawer-actions" }, copyBtn, resetBtn, delBtn);
+    return el("div", { class: "drawer-actions" }, pdfBtn, copyBtn, resetBtn, delBtn);
   }
 
   // ================================================================ settings view
@@ -705,6 +708,313 @@
         el("h2", { text: "Question bank by technology" }),
         el("p", { class: "muted", text: "Active questions available per stage. Add or edit questions in Supabase > Table Editor > questions, or in 02_questions.sql." }),
         el("div", { class: "table-wrap" }, matrix)));
+  }
+
+  // ================================================================ PDF reports
+
+  const BRAND = [31, 79, 138], INK = [22, 32, 43], MUTED = [98, 112, 128], LINE = [219, 225, 232], SOFT = [232, 239, 248];
+
+  // The built-in PDF fonts only cover Latin-1: replace anything else.
+  function clean(s) {
+    return String(s == null ? "" : s)
+      .replace(/[‘’]/g, "'").replace(/[“”]/g, '"')
+      .replace(/[–—−]/g, "-").replace(/…/g, "...")
+      .replace(/\t/g, "    ").replace(/[^\n\r\x20-\x7E -ÿ]/g, "?");
+  }
+  function slug(s) { return clean(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "report"; }
+  function pdfLib() {
+    if (!window.jspdf || !window.jspdf.jsPDF) {
+      toast("The PDF tool did not load. Check your internet connection and reload the page.");
+      return null;
+    }
+    return window.jspdf.jsPDF;
+  }
+  function pdfHeader(doc, title, sub) {
+    const w = doc.internal.pageSize.getWidth();
+    doc.setFillColor(...BRAND); doc.rect(0, 0, w, 3, "F");
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(...MUTED);
+    doc.text(clean((cfg.COMPANY_NAME ? cfg.COMPANY_NAME + "  |  " : "") + "Generated on " + fmtDate(new Date().toISOString())), 15, 12);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(18); doc.setTextColor(...INK);
+    doc.text(clean(title), 15, 21);
+    if (!sub) return 29;
+    doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.setTextColor(...BRAND);
+    doc.text(clean(sub), 15, 29);
+    return 35;
+  }
+  function pdfFooter(doc, label) {
+    const n = doc.getNumberOfPages();
+    const w = doc.internal.pageSize.getWidth(), h = doc.internal.pageSize.getHeight();
+    for (let i = 1; i <= n; i++) {
+      doc.setPage(i);
+      doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...MUTED);
+      doc.text(clean(label + "  |  Confidential"), 15, h - 8);
+      doc.text("Page " + i + " of " + n, w - 15, h - 8, { align: "right" });
+    }
+  }
+  function ensure(doc, y, need) {
+    if (y + need > doc.internal.pageSize.getHeight() - 16) { doc.addPage(); return 18; }
+    return y;
+  }
+  function pdfSection(doc, y, text, need) {
+    y = ensure(doc, y + 3, need || 16);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.setTextColor(...INK);
+    doc.text(clean(text), 15, y);
+    doc.setDrawColor(...LINE); doc.setLineWidth(0.3); doc.line(15, y + 2, doc.internal.pageSize.getWidth() - 15, y + 2);
+    return y + 8;
+  }
+  function pdfParagraph(doc, y, text, opts) {
+    const o = opts || {};
+    doc.setFont("helvetica", o.bold ? "bold" : "normal"); doc.setFontSize(o.size || 10);
+    doc.setTextColor(...(o.color || INK));
+    const lines = doc.splitTextToSize(clean(text), doc.internal.pageSize.getWidth() - 30);
+    lines.forEach(line => { y = ensure(doc, y, 5); doc.text(line, 15, y); y += (o.size || 10) * 0.45; });
+    return y + 1.5;
+  }
+  // Horizontal bars, one hue, value in ink.
+  function pdfBars(doc, y, items) {
+    const w = doc.internal.pageSize.getWidth();
+    const xb = 64, bw = w - 15 - 44 - xb;
+    items.forEach(it => {
+      y = ensure(doc, y, 7);
+      const p = it.possible ? Math.round(100 * it.earned / it.possible) : null;
+      doc.setFont("helvetica", "normal"); doc.setFontSize(9.5); doc.setTextColor(...INK);
+      doc.text(clean(it.name), 15, y + 3.3);
+      doc.setFillColor(...SOFT); doc.roundedRect(xb, y, bw, 4.4, 1, 1, "F");
+      if (p) { doc.setFillColor(...BRAND); doc.roundedRect(xb, y, Math.max(2, bw * p / 100), 4.4, 1, 1, "F"); }
+      doc.setFont("helvetica", "bold"); doc.text(p === null ? "n/a" : p + "%" + (it.pending ? "*" : ""), xb + bw + 4, y + 3.3);
+      doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(...MUTED);
+      doc.text(clean(it.sub || (fmtPts(it.earned) + " / " + fmtPts(it.possible) + " pts")), w - 15, y + 3.3, { align: "right" });
+      y += 7.2;
+    });
+    return y + 1;
+  }
+
+  function techItems(c) {
+    return skillsOf(c.id).map(s => ({
+      lang: s.lang, name: LANG_LABEL[s.lang] || s.lang, earned: num(s.earned), possible: num(s.possible),
+      questions: num(s.questions), pending: num(s.pending)
+    })).sort((a, b) => (b.possible ? b.earned / b.possible : -1) - (a.possible ? a.earned / a.possible : -1) || b.possible - a.possible);
+  }
+  function stageItemsFor(c, assigned, answers, qById) {
+    const steps = [...new Set(assigned.map(a => a.step))].sort((a, b) => a - b);
+    const t = c.step_times || {};
+    const keys = steps.map(String);
+    return steps.map((s, i) => {
+      const qs = assigned.filter(a => a.step === s).map(a => qById[a.question_id]).filter(Boolean);
+      const possible = qs.reduce((n, q) => n + num(q.points), 0);
+      const earned = qs.reduce((n, q) => n + scoreOf(q, answers[q.id]), 0);
+      const pending = qs.filter(q => q.kind === "code" && answers[q.id] && answers[q.id].manual_score == null && (answers[q.id].answer_text || "").trim()).length;
+      const startT = t[keys[i]] ? Date.parse(t[keys[i]]) : null;
+      const nextKey = keys.slice(i + 1).find(k => t[k]);
+      const endT = nextKey ? Date.parse(t[nextKey]) : (t.end ? Date.parse(t.end) : null);
+      const reachedIt = c.current_step != null && s <= c.current_step;
+      return {
+        step: s, name: (i + 1) + ". " + stageTitle(s), earned, possible: reachedIt ? possible : 0, fullPossible: possible,
+        pending, questions: qs.length, reached: reachedIt,
+        sub: !reachedIt ? "not reached" : (startT && endT ? fmtDur(endT - startT) : (startT ? "in progress" : ""))
+      };
+    });
+  }
+  function strengthSentence(items) {
+    const progs = items.filter(s => PROG_LANGS.includes(s.lang) && s.possible > 0);
+    if (!progs.length) return "";
+    const best = progs[0], worst = progs[progs.length - 1];
+    return "Strongest language: " + best.name + " (" + pct(best.earned, best.possible) + "% on " + best.questions + " questions)." +
+      (progs.length > 1 ? " Weakest: " + worst.name + " (" + pct(worst.earned, worst.possible) + "%)." : "") +
+      (best.questions < 3 ? " Based on few questions: confirm in the interview." : "");
+  }
+
+  function pdfCandidate(c, ctx) {
+    const JsPDF = pdfLib();
+    if (!JsPDF) return;
+    const { assigned, answers, events, qById } = ctx;
+    const doc = new JsPDF({ unit: "mm", format: "a4" });
+    const W = doc.internal.pageSize.getWidth();
+    const st = status(c);
+
+    let y = pdfHeader(doc, "Technical assessment report", c.full_name);
+    y = pdfParagraph(doc, y, [c.email, c.position, "Stacks: " + (c.stacks || []).map(s => LANG_LABEL[s]).join(", "), "Status: " + st.label].filter(Boolean).join("   |   "), { size: 9.5, color: MUTED });
+    y = pdfParagraph(doc, y, ["Invited " + fmtDate(c.created_at), c.started_at ? "Started " + fmtDate(c.started_at) : "Not started yet", c.submitted_at ? "Submitted " + fmtDate(c.submitted_at) : null].filter(Boolean).join("   |   "), { size: 9.5, color: MUTED });
+    y += 2;
+
+    // Key figures
+    const answered = assigned.filter(a => {
+      const x = answers[a.question_id];
+      return x && (x.choice != null || (x.answer_text && x.answer_text.trim()));
+    }).length;
+    const figs = [
+      [c.started_at ? pct(total(c), c.max_points) + "%" : "-", "Score: " + fmtPts(total(c)) + " of " + fmtPts(c.max_points) + " points"],
+      [assigned.length ? answered + " / " + assigned.length : "-", "Questions answered"],
+      [reached(c) ? reached(c).split(":")[0] : "-", "Furthest stage reached"],
+      [fmtDur(timeUsed(c)) || "-", "Time used of " + c.duration_minutes + " min"]
+    ];
+    const bw = (W - 30 - 9) / 4;
+    figs.forEach((f, i) => {
+      const x = 15 + i * (bw + 3);
+      doc.setDrawColor(...LINE); doc.setFillColor(248, 250, 252); doc.setLineWidth(0.3);
+      doc.roundedRect(x, y, bw, 19, 2, 2, "FD");
+      doc.setFont("helvetica", "bold"); doc.setFontSize(14); doc.setTextColor(...INK); doc.text(clean(f[0]), x + 4, y + 8.5);
+      doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...MUTED); doc.text(doc.splitTextToSize(clean(f[1]), bw - 8), x + 4, y + 13.5);
+    });
+    y += 24;
+    if (num(c.pending_reviews)) y = pdfParagraph(doc, y, num(c.pending_reviews) + " written answer(s) are not scored yet, so the score may still rise.", { size: 9, color: MUTED });
+
+    // Decision
+    y = pdfSection(doc, y, "Decision");
+    y = pdfParagraph(doc, y, "Decision: " + (c.decision ? decisionLabel(c.decision) : "Not decided yet"), { bold: true });
+    y = pdfParagraph(doc, y, c.notes ? "Notes: " + c.notes : "No notes.", { size: 9.5, color: c.notes ? INK : MUTED });
+
+    if (c.started_at) {
+      // By technology
+      const tech = techItems(c);
+      y = pdfSection(doc, y, "Score by technology", 40);
+      const sentence = strengthSentence(tech);
+      if (sentence) y = pdfParagraph(doc, y, sentence, { size: 9.5, color: BRAND, bold: true }) + 1;
+      y = pdfBars(doc, y, tech);
+      y = pdfParagraph(doc, y, "Counts only the stages the candidate reached. * includes written answers not scored yet.", { size: 8, color: MUTED });
+
+      // By stage
+      y = pdfSection(doc, y, "Score and time by stage", 40);
+      y = pdfBars(doc, y, stageItemsFor(c, assigned, answers, qById));
+
+      // Question by question
+      y = pdfSection(doc, y, "Question by question", 35);
+      const body = [];
+      let n = 0;
+      assigned.forEach(a => {
+        const q = qById[a.question_id];
+        if (!q) return;
+        n++;
+        const x = answers[q.id];
+        const reachedIt = c.current_step != null && a.step <= c.current_step;
+        let result;
+        if (!reachedIt) result = "Not reached";
+        else if (q.kind === "choice") result = !x || x.choice == null ? "No answer" : (x.choice === q.correct ? "Correct" : "Wrong");
+        else result = !x || !(x.answer_text || "").trim() ? "No answer" : (x.manual_score == null ? "To score" : "Scored");
+        const langName = q.lang === "any" ? (x && x.answer_lang ? LANG_LABEL[x.answer_lang] : "Any") : (LANG_LABEL[q.lang] || "");
+        const label = q.title ? q.title + ": " + q.prompt : q.prompt;
+        body.push([String(n), stageTitle(a.step), clean(label.length > 110 ? label.slice(0, 107) + "..." : label), clean(langName), result,
+          fmtPts(scoreOf(q, x)) + " / " + fmtPts(q.points)]);
+      });
+      doc.autoTable({
+        startY: y, head: [["#", "Stage", "Question", "Technology", "Result", "Points"]], body,
+        margin: { left: 15, right: 15, bottom: 16 }, theme: "grid",
+        styles: { font: "helvetica", fontSize: 8, cellPadding: 1.6, textColor: INK, lineColor: LINE, lineWidth: 0.2 },
+        headStyles: { fillColor: BRAND, textColor: 255, fontStyle: "bold" },
+        columnStyles: { 0: { cellWidth: 8 }, 1: { cellWidth: 28 }, 3: { cellWidth: 26 }, 4: { cellWidth: 20 }, 5: { cellWidth: 16, halign: "right" } },
+        didParseCell: d => {
+          if (d.section !== "body" || d.column.index !== 4) return;
+          const v = d.cell.raw;
+          if (v === "Correct" || v === "Scored") d.cell.styles.textColor = [43, 122, 75];
+          else if (v === "Wrong") d.cell.styles.textColor = [180, 35, 24];
+          else if (v === "To score") d.cell.styles.textColor = [154, 88, 0];
+          else d.cell.styles.textColor = MUTED;
+        }
+      });
+      y = doc.lastAutoTable.finalY + 4;
+
+      // Written answers in full
+      const written = assigned.map(a => qById[a.question_id]).filter(q => q && q.kind === "code" && answers[q.id] && (answers[q.id].answer_text || "").trim());
+      if (written.length) {
+        y = pdfSection(doc, y, "Written answers", 45);
+        written.forEach(q => {
+          const x = answers[q.id];
+          const langName = q.lang === "any" ? (x.answer_lang ? LANG_LABEL[x.answer_lang] : "language not given") : LANG_LABEL[q.lang];
+          const scoreText = x.manual_score == null ? "not scored yet" : fmtPts(x.manual_score) + " / " + fmtPts(q.points) + " pts";
+          y = ensure(doc, y, 20);
+          doc.autoTable({
+            startY: y, head: [[clean((q.title || "Written answer") + " (" + langName + "): " + scoreText)]],
+            body: [[clean(x.answer_text)]],
+            margin: { left: 15, right: 15, bottom: 16 }, theme: "grid",
+            styles: { font: "courier", fontSize: 8, cellPadding: 2.5, textColor: INK, lineColor: LINE, lineWidth: 0.2, overflow: "linebreak" },
+            headStyles: { font: "helvetica", fillColor: SOFT, textColor: INK, fontStyle: "bold", fontSize: 9 }
+          });
+          y = doc.lastAutoTable.finalY + 4;
+        });
+      }
+
+      // Integrity
+      y = pdfSection(doc, y, "Integrity signals");
+      const counts = {};
+      events.forEach(e => { counts[e.type] = (counts[e.type] || 0) + 1; });
+      const list = Object.entries(counts).map(([k, v]) => (EVENT_NAMES[k] || k) + ": " + v).join(", ");
+      y = pdfParagraph(doc, y, list || "No signals recorded.", { size: 9.5 });
+      pdfParagraph(doc, y, "Signals are not proof. Discuss them with the candidate in the interview.", { size: 8.5, color: MUTED });
+    }
+
+    pdfFooter(doc, c.full_name + "  |  Technical assessment report");
+    doc.save("assessment-" + slug(c.full_name) + ".pdf");
+  }
+
+  function pdfSummary(list) {
+    const JsPDF = pdfLib();
+    if (!JsPDF) return;
+    if (!list.length) { toast("No candidates to export."); return; }
+    const doc = new JsPDF({ unit: "mm", format: "a4", orientation: "landscape" });
+    let y = pdfHeader(doc, "Assessment results", list.length + (list.length === 1 ? " candidate" : " candidates") +
+      (search || statusFilter ? " (filtered list)" : ""));
+
+    const finished = list.filter(c => c.submitted_at);
+    const avg = finished.length ? Math.round(finished.reduce((n, c) => n + pct(total(c), c.max_points), 0) / finished.length) + "%" : "-";
+    const dec = {};
+    list.forEach(c => { const k = decisionLabel(c.decision); dec[k] = (dec[k] || 0) + 1; });
+    y = pdfParagraph(doc, y, "Finished: " + finished.length + "   |   Average score of finished tests: " + avg +
+      "   |   Waiting for review: " + list.filter(c => num(c.pending_reviews) > 0).length, { size: 10 });
+    y = pdfParagraph(doc, y, "Decisions: " + Object.entries(dec).map(([k, v]) => k + " " + v).join(", "), { size: 10 });
+
+    const langs = ["js", "java", "csharp", "php", "python", "sql", "general"];
+    const short = { js: "JS/TS", java: "Java", csharp: "C#", php: "PHP", python: "Python", sql: "SQL", general: "Web" };
+    const sorted = list.slice().sort((a, b) => (b.started_at ? pct(total(b), b.max_points) : -1) - (a.started_at ? pct(total(a), a.max_points) : -1));
+    const body = sorted.map(c => {
+      const sk = skillsOf(c.id);
+      const best = bestLanguage(c.id);
+      return [
+        clean(c.full_name + (c.position ? "\n" + c.position : "")),
+        status(c).label,
+        c.started_at ? pct(total(c), c.max_points) + "%\n" + fmtPts(total(c)) + "/" + fmtPts(c.max_points) : "",
+        best ? clean(LANG_LABEL[best.lang] + " " + best.pct + "%") : "",
+        ...langs.map(l => { const s = sk.find(x => x.lang === l); return s && num(s.possible) ? pct(s.earned, s.possible) + "%" : ""; }),
+        clean(reached(c).split(":")[0]),
+        fmtDur(timeUsed(c)).replace(" min ", "m ").replace(" s", "s"),
+        String(num(c.flag_count)),
+        num(c.pending_reviews) ? String(num(c.pending_reviews)) : "",
+        c.decision ? decisionLabel(c.decision) : ""
+      ];
+    });
+    doc.autoTable({
+      startY: y + 1,
+      head: [["Candidate", "Status", "Score", "Best language", ...langs.map(l => short[l]), "Reached", "Time", "Signals", "To score", "Decision"]],
+      body, margin: { left: 12, right: 12, bottom: 16 }, theme: "grid",
+      styles: { font: "helvetica", fontSize: 8, cellPadding: 1.6, textColor: INK, lineColor: LINE, lineWidth: 0.2, valign: "middle" },
+      headStyles: { fillColor: BRAND, textColor: 255, fontStyle: "bold" },
+      columnStyles: { 0: { cellWidth: 42, fontStyle: "bold" }, 2: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" }, 6: { halign: "right" },
+        7: { halign: "right" }, 8: { halign: "right" }, 9: { halign: "right" }, 10: { halign: "right" }, 13: { halign: "right" }, 14: { halign: "right" } },
+      didParseCell: d => {
+        if (d.section === "body" && d.column.index === 15) {
+          const v = d.cell.raw;
+          if (v === "Rejected") d.cell.styles.textColor = [180, 35, 24];
+          else if (v && v !== "On hold") { d.cell.styles.textColor = [43, 122, 75]; d.cell.styles.fontStyle = "bold"; }
+        }
+      }
+    });
+    y = doc.lastAutoTable.finalY + 4;
+    y = pdfParagraph(doc, y, "Language columns show the score on the questions of that technology, for the stages each candidate reached. With 1 or 2 questions per language, treat them as signals to confirm in the interview.", { size: 8, color: MUTED });
+
+    const withNotes = sorted.filter(c => c.notes);
+    if (withNotes.length) {
+      y = pdfSection(doc, y, "Decision notes");
+      doc.autoTable({
+        startY: y, head: [["Candidate", "Decision", "Notes"]],
+        body: withNotes.map(c => [clean(c.full_name), c.decision ? decisionLabel(c.decision) : "Not decided", clean(c.notes)]),
+        margin: { left: 12, right: 12, bottom: 16 }, theme: "grid",
+        styles: { font: "helvetica", fontSize: 8.5, cellPadding: 1.8, textColor: INK, lineColor: LINE, lineWidth: 0.2 },
+        headStyles: { fillColor: SOFT, textColor: INK, fontStyle: "bold" },
+        columnStyles: { 0: { cellWidth: 50, fontStyle: "bold" }, 1: { cellWidth: 30 } }
+      });
+    }
+
+    pdfFooter(doc, "Assessment results");
+    doc.save("assessment-results-" + new Date().toISOString().slice(0, 10) + ".pdf");
   }
 
   // ================================================================ export
