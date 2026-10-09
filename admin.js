@@ -8,7 +8,8 @@
   const PROG_LANGS = ["js", "java", "csharp", "php", "python"];
   const LANG_LABEL = {
     js: "JavaScript / TS", java: "Java", csharp: "C#", php: "PHP", python: "Python",
-    sql: "SQL", general: "Web and tools", any: "Not specified", other: "Other language"
+    sql: "SQL", general: "Web and tools", design: "Software design", algorithms: "Algorithms",
+    any: "Not specified", other: "Other language"
   };
   const DECISIONS = [["", "Not decided"], ["shortlisted", "Shortlisted"], ["interview", "Interview"], ["on_hold", "On hold"], ["rejected", "Rejected"], ["hired", "Hired"]];
   const EVENT_NAMES = {
@@ -25,6 +26,7 @@
   let search = "";
   let statusFilter = "";
   let lastCreated = null;
+  const MAX_QUESTIONS = 35;   // upper limit on questions per candidate
 
   // ================================================================ helpers
 
@@ -90,6 +92,7 @@
     if (!list.length) return null;
     list.sort((a, b) => (num(b.earned) / num(b.possible)) - (num(a.earned) / num(a.possible)) || num(b.possible) - num(a.possible));
     const s = list[0];
+    if (!num(s.earned)) return null;
     return { lang: s.lang, pct: pct(s.earned, s.possible), questions: num(s.questions), pending: num(s.pending) };
   }
 
@@ -644,6 +647,7 @@
 
     const inputs = [];
     const totalLine = el("span", { class: "muted" });
+    let totalQuestions = 0;
     const updateTotal = () => {
       let n = 0, pts = 0;
       inputs.forEach(r => {
@@ -652,7 +656,10 @@
         n += ch + co;
         pts += ch * avgPts(r.step, "choice") + co * avgPts(r.step, "code");
       });
-      totalLine.textContent = "Each candidate gets about " + n + " questions worth about " + Math.round(pts) + " points.";
+      totalQuestions = n;
+      totalLine.textContent = "Each candidate gets up to " + n + " questions worth about " + Math.round(pts) + " points (limit " + MAX_QUESTIONS + ")." +
+        (n > MAX_QUESTIONS ? " Too many questions: lower some counts before saving." : "");
+      totalLine.className = n > MAX_QUESTIONS ? "error-text" : "muted";
     };
 
     const tbody = el("tbody", {}, stages.map(s => {
@@ -672,6 +679,7 @@
 
     const save = el("button", { class: "primary", text: "Save settings" });
     save.addEventListener("click", async () => {
+      if (totalQuestions > MAX_QUESTIONS) { toast("At most " + MAX_QUESTIONS + " questions per candidate. Lower some counts."); return; }
       save.disabled = true;
       for (const r of inputs) {
         const { error } = await sb.from("stages").update({
@@ -686,7 +694,7 @@
       await refresh();
     });
 
-    const cols = ["general", "sql", ...PROG_LANGS, "any"];
+    const cols = ["general", "sql", "design", "algorithms", ...PROG_LANGS, "any"];
     const matrix = el("table", { class: "matrix" },
       el("thead", {}, el("tr", {}, el("th", { text: "Stage" }), cols.map(l => el("th", { class: "num", text: LANG_LABEL[l] === "Not specified" ? "Any language" : LANG_LABEL[l] })))),
       el("tbody", {}, stages.map(s => el("tr", {},
@@ -819,6 +827,7 @@
     const progs = items.filter(s => PROG_LANGS.includes(s.lang) && s.possible > 0);
     if (!progs.length) return "";
     const best = progs[0], worst = progs[progs.length - 1];
+    if (!best.earned) return "No points yet in the programming languages tested.";
     return "Strongest language: " + best.name + " (" + pct(best.earned, best.possible) + "% on " + best.questions + " questions)." +
       (progs.length > 1 ? " Weakest: " + worst.name + " (" + pct(worst.earned, worst.possible) + "%)." : "") +
       (best.questions < 3 ? " Based on few questions: confirm in the interview." : "");
@@ -962,8 +971,8 @@
       "   |   Waiting for review: " + list.filter(c => num(c.pending_reviews) > 0).length, { size: 10 });
     y = pdfParagraph(doc, y, "Decisions: " + Object.entries(dec).map(([k, v]) => k + " " + v).join(", "), { size: 10 });
 
-    const langs = ["js", "java", "csharp", "php", "python", "sql", "general"];
-    const short = { js: "JS/TS", java: "Java", csharp: "C#", php: "PHP", python: "Python", sql: "SQL", general: "Web" };
+    const langs = ["js", "java", "csharp", "php", "python", "sql", "general", "design", "algorithms"];
+    const short = { js: "JS/TS", java: "Java", csharp: "C#", php: "PHP", python: "Python", sql: "SQL", general: "Web", design: "Design", algorithms: "Algo" };
     const sorted = list.slice().sort((a, b) => (b.started_at ? pct(total(b), b.max_points) : -1) - (a.started_at ? pct(total(a), a.max_points) : -1));
     const body = sorted.map(c => {
       const sk = skillsOf(c.id);
@@ -985,12 +994,12 @@
       startY: y + 1,
       head: [["Candidate", "Status", "Score", "Best language", ...langs.map(l => short[l]), "Reached", "Time", "Signals", "To score", "Decision"]],
       body, margin: { left: 12, right: 12, bottom: 16 }, theme: "grid",
-      styles: { font: "helvetica", fontSize: 8, cellPadding: 1.6, textColor: INK, lineColor: LINE, lineWidth: 0.2, valign: "middle" },
+      styles: { font: "helvetica", fontSize: 7.5, cellPadding: 1.4, textColor: INK, lineColor: LINE, lineWidth: 0.2, valign: "middle" },
       headStyles: { fillColor: BRAND, textColor: 255, fontStyle: "bold" },
-      columnStyles: { 0: { cellWidth: 42, fontStyle: "bold" }, 2: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" }, 6: { halign: "right" },
-        7: { halign: "right" }, 8: { halign: "right" }, 9: { halign: "right" }, 10: { halign: "right" }, 13: { halign: "right" }, 14: { halign: "right" } },
+      columnStyles: Object.assign({ 0: { cellWidth: 38, fontStyle: "bold" }, 2: { halign: "right" }, 3: { cellWidth: 24 } },
+        Object.fromEntries([...langs.map((_, i) => 4 + i), langs.length + 6, langs.length + 7].map(i => [i, { halign: "right" }]))),
       didParseCell: d => {
-        if (d.section === "body" && d.column.index === 15) {
+        if (d.section === "body" && d.column.index === langs.length + 8) {
           const v = d.cell.raw;
           if (v === "Rejected") d.cell.styles.textColor = [180, 35, 24];
           else if (v && v !== "On hold") { d.cell.styles.textColor = [43, 122, 75]; d.cell.styles.fontStyle = "bold"; }
@@ -1020,7 +1029,7 @@
   // ================================================================ export
 
   function exportCsv() {
-    const langs = ["general", "sql", ...PROG_LANGS];
+    const langs = ["general", "sql", "design", "algorithms", ...PROG_LANGS];
     const head = ["Name", "Email", "Position", "Stacks", "Status", "Decision", "Score %", "Points", "Max points",
       ...langs.map(l => LANG_LABEL[l] + " %"), "Best language", "Reached", "Started", "Submitted", "Minutes used",
       "Signals", "Written answers to score", "Notes"];
